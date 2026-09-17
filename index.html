@@ -436,7 +436,7 @@
     </div>
   </div>
 
-  <div class="result-banner" id="resultBanner">가위, 바위, 보 중 하나를 골라보세요!</div>
+  <div class="result-banner" id="resultBanner">AI가 내는 수를 이기는 버튼을 눌러보세요!</div>
 
   <div class="scoreboard">
     <div class="vs-side ai"><span class="vs-label">🤖 AI</span><span class="vs-num" id="aiScoreNum">0</span></div>
@@ -466,7 +466,7 @@
   const ROUNDS_PER_STAGE = 5;      // 1~3단계(학습 단계)에서 각 단계별 라운드 수
   const AI_WIN_CAP       = 80;     // AI 승률의 최댓값(%). 학습 데이터가 아무리 많아져도 이 이상은 안 올라감
   const TIE_RATE         = 0.15;   // 4단계(실전 모드)에서 무승부 확률 (0~1, 고정)
-  const REVEAL_DELAY_MS  = 700;    // "가위바위보!" 하는 동안의 대기 시간
+  const REVEAL_DELAY_MS  = 900;    // "가위!바위!보!" 구호가 끝날 때까지의 시간(3박자로 나뉨)
   // 4단계(실전 모드)의 AI 승률 = 그동안 쌓인 학습 데이터 총 개수(%) — 예: 데이터 30개면 AI 승률 30%
   // =====================================================================
 
@@ -502,17 +502,27 @@
   // 학습 단계별 안내 문구
   const STAGE_INFO = {
     1: { label: '가위 학습중', doneTitle: '🎉 AI가 가위를 배웠어요!',
-         doneText: '이제부터 AI가 바위까지 배워볼게요. 계속 도전해 주세요!' },
+         doneText: '이제부터 AI가 바위도 함께 낼 수 있어요! 가위 또는 바위 중 하나가 나와요.' },
     2: { label: '바위 학습중', doneTitle: '🎉 AI가 바위까지 배웠어요!',
-         doneText: '이제 마지막으로 보를 배울 차례예요!' },
+         doneText: '이제부터 AI가 보까지 배워서 가위, 바위, 보를 모두 낼 수 있어요!' },
     3: { label: '보 학습중', doneTitle: '🏆 AI 학습 완료!',
-         doneText: 'AI가 가위, 바위, 보를 모두 배웠어요. 이제부터는 진짜 실력으로 대결해요. 과연 몇 번이나 이길 수 있을까요?' }
+         doneText: 'AI가 가위, 바위, 보를 모두 배웠어요. 이제부터는 그동안 쌓은 학습 데이터를 활용해서 진짜 실력으로 대결해요!' }
+  };
+
+  // 각 단계가 "시작"될 때 보여줄 안내 팝업 (시작하기 버튼으로 진행)
+  const STAGE_START_INFO = {
+    1: { emoji: '🤖', title: '학습을 시작해요!',
+         text: '지금 AI는 가위만 알아요. 바위 데이터를 학습시켜 주세요!' },
+    3: { emoji: '🤖', title: '다음 학습을 시작해요!',
+         text: '이제 바위까지 알아요. 보를 학습시켜 주세요!' },
+    4: { emoji: '🏆', title: '실전 대결을 시작해요!',
+         text: '이제 가위, 바위, 보를 모두 알아요! 그동안 배운 실력으로 대결해봐요.' }
   };
 
   const CAPTIONS = {
-    1: 'AI가 아직 가위밖에 몰라요. 가위바위보를 하면서 AI를 가르쳐 주세요!',
-    2: 'AI가 바위까지 배웠어요. 계속 가르쳐 주세요!',
-    3: 'AI가 보까지 배우고 있어요. 조금만 더 힘내요!',
+    1: 'AI는 지금 가위만 낼 수 있어요! 가위를 이기는 수를 내보세요.',
+    2: 'AI는 이제 가위와 바위, 둘 중 하나를 낼 수 있어요! 무엇이 나올지 예상하고 내보세요.',
+    3: 'AI는 이제 가위, 바위, 보를 모두 자유롭게 낼 수 있어요! 최선을 다해 이겨보세요.',
     4: '🏆 AI가 훈련을 마쳤어요! 이제부터는 진짜 실력 대결이에요. 도전!'
   };
 
@@ -520,10 +530,19 @@
   const LOSES_TO = { '가위': '보', '바위': '가위', '보': '바위' };
   // 상대가 이 수를 내면 이기는 수
   const BEATS    = { '가위': '바위', '바위': '보', '보': '가위' };
+  // 학습 단계(1~3)에서 AI가 그동안 배워서 낼 수 있는 수의 목록 (누적으로 늘어남)
+  const STAGE_AI_POOL = {
+    1: ['가위'],
+    2: ['가위', '바위'],
+    3: ['가위', '바위', '보']
+  };
+  // 2·3단계는 우측 상단 "학습 데이터"에 실제로 쌓인 개수로 다음 단계 진행을 판단함 (1단계는 라운드 수 그대로 사용)
+  const STAGE_TARGET_MOVE = { 2: '바위', 3: '보' };
+  const STAGE_COMPLETE_THRESHOLD = 10; // 2·3단계에서 학습 데이터가 몇 개 쌓여야 다음 단계로 넘어가는지
 
   let state = {
     stage: 1,          // 1,2,3 = 학습 단계, 4 = 실전 모드
-    roundInStage: 0,
+    roundInStage: 0,    // 1단계 진행도(라운드 수)
     win: 0, tie: 0, lose: 0,
     totalRounds: 0,
     locked: false
@@ -549,8 +568,9 @@
 
   function pickAiMove(student){
     if (state.stage < 4){
-      // 학습 단계: 학생이 항상 이기도록 AI가 지는 수를 냄
-      return LOSES_TO[student];
+      // 학습 단계: AI는 이 단계까지 배운 수들 중에서만 무작위로 냄 (누적)
+      const pool = STAGE_AI_POOL[state.stage];
+      return pool[Math.floor(Math.random() * pool.length)];
     }
     // 실전 모드: AI 승률 = 학습 데이터 총 개수(%). 나머지 확률을 무승부/학생승으로 나눔
     const aiWinRate = currentAiWinPct() / 100;
@@ -561,6 +581,21 @@
     return BEATS[student];                                               // AI 승
   }
 
+  // AI가 낼 수 있는 수가 하나뿐인(1단계) 동안만 그 수를 이기는 버튼 하나로 제한.
+  // 2단계부터는 AI가 무엇을 낼지 예측할 수 없으므로 학생도 세 버튼을 자유롭게 사용.
+  function updateEnabledChoices(){
+    if (state.locked) return; // 라운드 진행 중에는 건드리지 않음
+    const pool = state.stage <= 3 ? STAGE_AI_POOL[state.stage] : null;
+    if (pool && pool.length === 1){
+      const correctMove = BEATS[pool[0]];
+      document.querySelectorAll('.choice-btn').forEach(b => {
+        b.disabled = (b.dataset.move !== correctMove);
+      });
+    } else {
+      setChoicesDisabled(false);
+    }
+  }
+
   function updateProgress(){
     const nodes = [el('node1'), el('node2'), el('node3'), el('node4')];
     nodes.forEach((n) => n.classList.remove('done', 'active'));
@@ -568,8 +603,12 @@
     nodes[state.stage - 1].classList.add('active');
 
     let pct;
-    if (state.stage <= 3){
-      pct = ((state.stage - 1) + state.roundInStage / ROUNDS_PER_STAGE) / 4 * 100;
+    if (state.stage === 1){
+      pct = (0 + state.roundInStage / ROUNDS_PER_STAGE) / 4 * 100;
+    } else if (state.stage <= 3){
+      const target = STAGE_TARGET_MOVE[state.stage];
+      const frac = Math.min(dataCounts[target] / STAGE_COMPLETE_THRESHOLD, 1);
+      pct = ((state.stage - 1) + frac) / 4 * 100;
     } else {
       pct = 100;
     }
@@ -578,8 +617,13 @@
   }
 
   function refreshCaption(){
-    if (state.stage <= 3){
-      caption.textContent = CAPTIONS[state.stage];
+    if (state.stage === 1){
+      caption.textContent = CAPTIONS[1];
+    } else if (state.stage <= 3){
+      const target = STAGE_TARGET_MOVE[state.stage];
+      const shown = Math.min(dataCounts[target], STAGE_COMPLETE_THRESHOLD);
+      caption.textContent = CAPTIONS[state.stage] +
+        ' (' + target + ' ' + shown + '/' + STAGE_COMPLETE_THRESHOLD + '번)';
     } else {
       caption.textContent = CAPTIONS[4] + ' (학습 데이터 ' + totalData() + '개 → 이번 판 AI 승률 ' + currentAiWinPct() + '%)';
     }
@@ -599,19 +643,29 @@
     state.locked = true;
     setChoicesDisabled(true);
 
-    studentEmoji.innerHTML = iconHtml(student);
+    // 둘 다 숨긴 채로 함께 흔들리며 "가위바위보!" 구호에 맞춰 동시에 낼 준비
+    studentEmoji.textContent = '❓';
     aiEmoji.textContent = '❓';
     resultBanner.className = 'result-banner';
-    resultBanner.textContent = '가위, 바위, 보!';
     aiCard.classList.add('shaking');
-    studentCard.classList.add('reveal');
+    studentCard.classList.add('shaking');
     recordData(student);
+
+    const beat = REVEAL_DELAY_MS / 3;
+    resultBanner.textContent = '가위!';
+    setTimeout(() => { resultBanner.textContent = '바위!'; }, beat);
+    setTimeout(() => { resultBanner.textContent = '보!'; }, beat * 2);
 
     setTimeout(() => {
       aiCard.classList.remove('shaking');
+      studentCard.classList.remove('shaking');
+
+      // 학생과 AI가 정확히 같은 순간에 동시 공개
       const aiMove = pickAiMove(student);
       aiEmoji.innerHTML = iconHtml(aiMove);
+      studentEmoji.innerHTML = iconHtml(student);
       aiCard.classList.add('reveal');
+      studentCard.classList.add('reveal');
 
       const result = judge(student, aiMove);
       showResult(result);
@@ -622,7 +676,7 @@
         studentCard.classList.remove('reveal');
       }, 450);
 
-      advanceState(result);
+      advanceState(student);
     }, REVEAL_DELAY_MS);
   }
 
@@ -644,18 +698,25 @@
     updateScoreboard();
   }
 
-  function advanceState(){
-    if (state.stage <= 3){
+  function advanceState(student){
+    if (state.stage === 1){
       state.roundInStage++;
       updateProgress();
       if (state.roundInStage >= ROUNDS_PER_STAGE){
         setTimeout(() => openStageOverlay(state.stage), 550);
         return;
       }
+    } else if (state.stage <= 3){
+      // 2·3단계: 우측 상단 "학습 데이터"에 실제로 쌓인 목표 수의 개수로 판단
+      updateProgress();
+      if (dataCounts[STAGE_TARGET_MOVE[state.stage]] >= STAGE_COMPLETE_THRESHOLD){
+        setTimeout(() => openStageOverlay(state.stage), 550);
+        return;
+      }
     }
     setTimeout(() => {
       state.locked = false;
-      setChoicesDisabled(false);
+      updateEnabledChoices();
     }, 550);
   }
 
@@ -664,21 +725,55 @@
     el('overlayEmoji').textContent = finishedStage === 3 ? '🏆' : '🎉';
     el('overlayTitle').textContent = info.doneTitle;
     el('overlayText').textContent = info.doneText;
-    el('overlayBtn').textContent = finishedStage === 3 ? '실전 대결 시작!' : '다음 단계 시작!';
+    // 1단계를 마쳤을 때만 바로 다음 단계로 이어지고, 2·3단계를 마치면 다음 시작 안내 팝업이 이어짐
+    el('overlayBtn').textContent = finishedStage === 1 ? '다음 단계 시작!' : '확인';
+    overlay.dataset.mode = 'complete';
+    overlay.dataset.finishedStage = finishedStage;
     overlay.classList.add('show');
   }
 
-  el('overlayBtn').addEventListener('click', () => {
-    overlay.classList.remove('show');
-    state.stage++;
-    state.roundInStage = 0;
+  function showStartPopup(stageNum){
+    const info = STAGE_START_INFO[stageNum];
+    el('overlayEmoji').textContent = info.emoji;
+    el('overlayTitle').textContent = info.title;
+    el('overlayText').textContent = info.text;
+    el('overlayBtn').textContent = '시작하기';
+    overlay.dataset.mode = 'start';
+    overlay.dataset.targetStage = stageNum;
+    overlay.classList.add('show');
+  }
+
+  function enterStage(newStage){
+    state.stage = newStage;
+    if (newStage === 1) state.roundInStage = 0;
     updateProgress();
     state.locked = false;
-    setChoicesDisabled(false);
+    updateEnabledChoices();
     resultBanner.className = 'result-banner';
-    resultBanner.textContent = state.stage === 4
+    resultBanner.textContent = newStage === 4
       ? '이제부터 진짜 실력 대결이에요. 준비됐나요?'
-      : '가위, 바위, 보 중 하나를 골라보세요!';
+      : newStage === 1
+        ? 'AI가 내는 수를 이기는 버튼을 눌러보세요!'
+        : '가위, 바위, 보 중 하나를 내보세요!';
+  }
+
+  el('overlayBtn').addEventListener('click', () => {
+    const mode = overlay.dataset.mode;
+    overlay.classList.remove('show');
+
+    if (mode === 'complete'){
+      const finished = Number(overlay.dataset.finishedStage);
+      if (finished === 1){
+        // 1단계 완료 → 안내 팝업 없이 바로 2단계 진행
+        enterStage(2);
+      } else {
+        // 2·3단계 완료 → 다음 단계 "시작하기" 안내 팝업을 먼저 보여줌
+        showStartPopup(finished + 1);
+      }
+    } else {
+      // 시작 안내 팝업의 "시작하기" 버튼
+      enterStage(Number(overlay.dataset.targetStage));
+    }
   });
 
   document.querySelectorAll('.choice-btn').forEach(btn => {
@@ -694,16 +789,18 @@
     aiEmoji.textContent = '❓';
     studentEmoji.textContent = '❓';
     resultBanner.className = 'result-banner';
-    resultBanner.textContent = '가위, 바위, 보 중 하나를 골라보세요!';
-    overlay.classList.remove('show');
+    resultBanner.textContent = 'AI가 내는 수를 이기는 버튼을 눌러보세요!';
     updateProgress();
     updateScoreboard();
-    setChoicesDisabled(false);
+    updateEnabledChoices();
+    showStartPopup(1);
   });
 
   initDataPanelIcons();
   updateProgress();
   updateScoreboard();
+  updateEnabledChoices();
+  showStartPopup(1);
 </script>
 </body>
 </html>
